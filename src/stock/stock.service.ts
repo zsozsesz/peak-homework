@@ -9,9 +9,12 @@ const MOVING_AVERAGE_WINDOW = 10;
 
 @Injectable()
 export class StockService {
-  private readonly finnhubApiService = new FinnhubApiService();
   private readonly logger = new Logger(StockService.name);
-  constructor(private readonly prisma: PrismaService) {}
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly finnhubApiService: FinnhubApiService,
+  ) {}
 
   async getStock(symbol: string): Promise<StockPriceResponseDto> {
     this.logger.log({
@@ -95,5 +98,41 @@ export class StockService {
       createdAt: stockSymbol.createdAt,
       updatedAt: stockSymbol.updatedAt,
     };
+  }
+
+  async getActiveSymbols(): Promise<string[]> {
+    const rows = await this.prisma.stockSymbol.findMany({
+      where: { isActive: true },
+      select: { symbol: true },
+    });
+    return rows.map((r) => r.symbol);
+  }
+
+  async recordStockPrice(symbol: string, price: number): Promise<void> {
+    const stockSymbol = await this.prisma.stockSymbol.findUnique({
+      where: { symbol },
+    });
+
+    if (!stockSymbol) {
+      this.logger.error({
+        message: 'Symbol not found in database, skipping price record',
+        symbol,
+      });
+      return;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.stockPrice.create({
+        data: {
+          stockSymbolId: stockSymbol.id,
+          price,
+          fetchedAt: new Date(),
+        },
+      }),
+      this.prisma.stockSymbol.update({
+        where: { symbol },
+        data: { lastCheckedAt: new Date() },
+      }),
+    ]);
   }
 }
