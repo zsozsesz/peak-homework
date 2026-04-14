@@ -6,10 +6,12 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
-      PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/peak
-      REDIS_URL: redis://redis:6379
+      NODE_ENV: ${NODE_ENV}
+      PORT: ${PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      FINNHUB_BASE_URL: ${FINNHUB_BASE_URL}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -22,9 +24,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: peak
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
