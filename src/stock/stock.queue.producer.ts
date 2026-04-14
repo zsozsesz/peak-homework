@@ -24,6 +24,7 @@ export class StockQueueProducer implements OnModuleInit {
           name: UPDATE_ALL_SYMBOLS_JOB,
           data: {},
           opts: {
+            removeOnComplete: true,
             backoff: 3,
             attempts: 5,
           },
@@ -44,6 +45,10 @@ export class StockQueueProducer implements OnModuleInit {
       {
         backoff: 3,
         attempts: 5,
+        removeOnComplete: {
+          count: 100,
+          age: 60 * 60, // 1 hour
+        },
       },
     );
     this.logger.log({
