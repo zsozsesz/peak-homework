@@ -28,7 +28,7 @@ export class FinnhubApiService {
     this.baseUrl = process.env.FINNHUB_BASE_URL ?? 'https://finnhub.io/api/v1';
   }
 
-  async getStockPrice(symbol: string): Promise<number> {
+  async getStockPrice(symbol: string): Promise<FinnhubQuoteResponse> {
     const url = `${this.baseUrl}/quote?symbol=${encodeURIComponent(symbol)}&token=${this.apiKey}`;
 
     let response: Response;
@@ -65,16 +65,6 @@ export class FinnhubApiService {
 
     const data = (await response.json()) as FinnhubQuoteResponse;
 
-    if (data.c === 0) {
-      this.logger.warn({
-        message: 'No price data available for symbol',
-        symbol,
-      });
-      throw new InternalServerErrorException(
-        `No price data available for symbol '${symbol}'`,
-      );
-    }
-
-    return data.c;
+    return data;
   }
 }
