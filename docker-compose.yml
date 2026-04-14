@@ -9,7 +9,6 @@ services:
       NODE_ENV: ${NODE_ENV}
       PORT: ${PORT}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: ${REDIS_URL}
       FINNHUB_BASE_URL: ${FINNHUB_BASE_URL}
       FINNHUB_API_KEY: ${FINNHUB_API_KEY}
     depends_on:
@@ -44,7 +43,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: redis://redis:6379
       FINNHUB_BASE_URL: ${FINNHUB_BASE_URL}
       FINNHUB_API_KEY: ${FINNHUB_API_KEY}
     depends_on:
