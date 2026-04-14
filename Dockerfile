@@ -23,7 +23,14 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# Install prisma CLI for running migrations (it's a devDependency but needed at runtime)
+RUN npm install prisma --save-exact --no-save
+
 COPY --from=builder /app/dist ./dist
+
+# Copy prisma schema, migrations and config so `prisma migrate deploy` can run
+COPY prisma ./prisma
+COPY prisma.config.ts ./
 
 # Run as non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
