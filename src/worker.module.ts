@@ -1,5 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { FinnhubApiService } from './stock/finnhub-api.service.js';
 import { STOCK_QUEUE } from './stock/stock.queue.js';
@@ -9,9 +10,11 @@ import { StockService } from './stock/stock.service.js';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     BullModule.forRootAsync({
-      useFactory: () => {
-        const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
+      useFactory: (configService: ConfigService) => {
+        const redisUrl =
+          configService.get<string>('REDIS_URL') ?? 'redis://localhost:6379';
         const url = new URL(redisUrl);
         return {
           connection: {
@@ -20,6 +23,7 @@ import { StockService } from './stock/stock.service.js';
           },
         };
       },
+      inject: [ConfigService],
     }),
     BullModule.registerQueue({ name: STOCK_QUEUE }),
     PrismaModule,
