@@ -5,33 +5,36 @@ import { FinnhubApiService } from './finnhub-api.service.js';
 
 const mockQuote = {
   c: 150.5,
-  h: 155.0,
-  l: 148.0,
-  o: 149.0,
+  h: 155,
+  l: 148,
+  o: 149,
   pc: 147.5,
   t: 1712345678,
 };
 
 describe('FinnhubApiService', () => {
   let service: FinnhubApiService;
-  let configService: jest.Mocked<ConfigService>;
+  let getOrThrowMock: jest.Mock;
+  let getMock: jest.Mock;
 
   beforeEach(async () => {
+    getOrThrowMock = jest.fn().mockReturnValue('test-api-key');
+    getMock = jest.fn().mockReturnValue('https://finnhub.io/api/v1');
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FinnhubApiService,
         {
           provide: ConfigService,
           useValue: {
-            getOrThrow: jest.fn().mockReturnValue('test-api-key'),
-            get: jest.fn().mockReturnValue('https://finnhub.io/api/v1'),
+            getOrThrow: getOrThrowMock,
+            get: getMock,
           },
         },
       ],
     }).compile();
 
     service = module.get<FinnhubApiService>(FinnhubApiService);
-    configService = module.get(ConfigService);
   });
 
   afterEach(() => {
@@ -40,11 +43,11 @@ describe('FinnhubApiService', () => {
 
   describe('constructor', () => {
     it('should call getOrThrow for FINNHUB_API_KEY', () => {
-      expect(configService.getOrThrow).toHaveBeenCalledWith('FINNHUB_API_KEY');
+      expect(getOrThrowMock).toHaveBeenCalledWith('FINNHUB_API_KEY');
     });
 
     it('should call get for FINNHUB_BASE_URL', () => {
-      expect(configService.get).toHaveBeenCalledWith('FINNHUB_BASE_URL');
+      expect(getMock).toHaveBeenCalledWith('FINNHUB_BASE_URL');
     });
 
     it('should fall back to default base URL when config returns undefined', async () => {
@@ -62,7 +65,7 @@ describe('FinnhubApiService', () => {
       }).compile();
 
       const svc = moduleWithNoUrl.get<FinnhubApiService>(FinnhubApiService);
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: jest.fn().mockResolvedValue(mockQuote),
@@ -70,7 +73,7 @@ describe('FinnhubApiService', () => {
 
       await svc.getStockPrice('AAPL');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining('https://finnhub.io/api/v1'),
       );
     });
@@ -78,7 +81,7 @@ describe('FinnhubApiService', () => {
 
   describe('getStockPrice', () => {
     it('should return parsed quote data on success', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: jest.fn().mockResolvedValue(mockQuote),
@@ -90,7 +93,7 @@ describe('FinnhubApiService', () => {
     });
 
     it('should include symbol and token in the request URL', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: jest.fn().mockResolvedValue(mockQuote),
@@ -98,13 +101,13 @@ describe('FinnhubApiService', () => {
 
       await service.getStockPrice('AAPL');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringMatching(/symbol=AAPL.*token=test-api-key/),
       );
     });
 
     it('should URL-encode the symbol', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
         json: jest.fn().mockResolvedValue(mockQuote),
@@ -112,13 +115,15 @@ describe('FinnhubApiService', () => {
 
       await service.getStockPrice('BRK.B');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining('symbol=BRK.B'),
       );
     });
 
     it('should throw InternalServerErrorException when fetch throws', async () => {
-      global.fetch = jest.fn().mockRejectedValue(new Error('Network failure'));
+      globalThis.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('Network failure'));
 
       await expect(service.getStockPrice('AAPL')).rejects.toThrow(
         InternalServerErrorException,
@@ -129,7 +134,7 @@ describe('FinnhubApiService', () => {
     });
 
     it('should wrap non-Error rejections in InternalServerErrorException', async () => {
-      global.fetch = jest.fn().mockRejectedValue('string error');
+      globalThis.fetch = jest.fn().mockRejectedValue('string error');
 
       await expect(service.getStockPrice('AAPL')).rejects.toThrow(
         InternalServerErrorException,
@@ -137,7 +142,7 @@ describe('FinnhubApiService', () => {
     });
 
     it('should throw InternalServerErrorException when response status is not ok', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: false,
         status: 403,
         statusText: 'Forbidden',
@@ -152,7 +157,7 @@ describe('FinnhubApiService', () => {
     });
 
     it('should throw InternalServerErrorException on 500 response', async () => {
-      global.fetch = jest.fn().mockResolvedValue({
+      globalThis.fetch = jest.fn().mockResolvedValue({
         ok: false,
         status: 500,
         statusText: 'Internal Server Error',

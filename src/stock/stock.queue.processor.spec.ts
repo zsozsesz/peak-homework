@@ -1,3 +1,4 @@
+import type { Job } from 'bullmq';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FinnhubApiService } from './finnhub-api.service.js';
 import { StockQueueProcessor } from './stock.queue.processor.js';
@@ -8,8 +9,15 @@ import {
 } from './stock.queue.js';
 import { StockService } from './stock.service.js';
 
-const makeJob = (name: string, data: Record<string, unknown> = {}) =>
-  ({ name, data, id: '1' }) as any;
+const makeJob = (
+  name: string,
+  data: Record<string, unknown> = {},
+): Job<Record<string, unknown>, unknown, string> =>
+  ({ name, data, id: '1' }) as unknown as Job<
+    Record<string, unknown>,
+    unknown,
+    string
+  >;
 
 describe('StockQueueProcessor', () => {
   let processor: StockQueueProcessor;
