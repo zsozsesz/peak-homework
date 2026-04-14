@@ -37,7 +37,9 @@ export class StockService {
     });
 
     if (!stockSymbol) {
-      throw new NotFoundException(`Stock symbol '${symbol}' not found`);
+      throw new NotFoundException(
+        `Stock symbol '${symbol}' not found in database`,
+      );
     }
 
     const latestPrice = stockSymbol.prices[0] ?? null;
