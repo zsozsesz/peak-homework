@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 interface FinnhubQuoteResponse {
   c: number; // Current price
@@ -19,13 +20,11 @@ export class FinnhubApiService {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  constructor() {
-    const key = process.env.FINNHUB_API_KEY;
-    if (!key) {
-      throw new Error('FINNHUB_API_KEY environment variable is not set');
-    }
-    this.apiKey = key;
-    this.baseUrl = process.env.FINNHUB_BASE_URL ?? 'https://finnhub.io/api/v1';
+  constructor(private readonly configService: ConfigService) {
+    this.apiKey = configService.getOrThrow<string>('FINNHUB_API_KEY');
+    this.baseUrl =
+      configService.get<string>('FINNHUB_BASE_URL') ??
+      'https://finnhub.io/api/v1';
   }
 
   async getStockPrice(symbol: string): Promise<FinnhubQuoteResponse> {
