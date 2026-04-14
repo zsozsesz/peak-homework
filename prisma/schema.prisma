@@ -8,3 +8,26 @@ datasource db {
 }
 
 
+
+model StockSymbol {
+  id               String       @id @default(cuid())
+  symbol           String       @unique
+  isActive         Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  lastCheckedAt    DateTime?
+  prices           StockPrice[]
+
+  @@index([isActive])
+}
+
+model StockPrice {
+  id               String       @id @default(cuid())
+  stockSymbolId    String
+  price            Decimal      @db.Decimal(12, 4)
+  fetchedAt        DateTime     @default(now())
+
+  stockSymbol      StockSymbol  @relation(fields: [stockSymbolId], references: [id], onDelete: Cascade)
+
+  @@index([stockSymbolId, fetchedAt(sort: Desc)])
+}
