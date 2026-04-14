@@ -6,3 +6,4 @@ coverage
 *.md
 docker-compose*.yml
 .env*
+/src/generated/prisma
