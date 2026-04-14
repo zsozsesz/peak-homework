@@ -27,9 +27,9 @@ export class StockQueueProcessor extends WorkerHost {
     try {
       switch (job.name) {
         case UPDATE_ALL_SYMBOLS_JOB:
-          return this.handleUpdateAllSymbols();
+          return await this.handleUpdateAllSymbols();
         case UPDATE_SYMBOL_PRICE_JOB:
-          return this.handleFetchSymbolPrice(
+          return await this.handleFetchSymbolPrice(
             (job.data as UpdateSymbolPriceJobData).symbol,
           );
         default:
