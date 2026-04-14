@@ -1,98 +1,325 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Peak Homework — Stock Price Tracker
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A NestJS application that tracks stock prices by periodically polling the [Finnhub API](https://finnhub.io/). The system is split into two independently runnable processes:
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+- **API server** — exposes a REST API for querying and managing tracked stock symbols.
+- **Worker** — a background process that consumes a BullMQ queue, polls Finnhub for prices, and persists them to the database.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Table of Contents
 
-## Project setup
+- [Architecture Overview](#architecture-overview)
+- [Services](#services)
+- [Data Model](#data-model)
+- [API Endpoints](#api-endpoints)
+- [Environment Variables](#environment-variables)
+- [Running the Application](#running-the-application)
+  - [With Docker (recommended)](#with-docker-recommended)
+  - [Local Development](#local-development)
+- [Running Tests](#running-tests)
+- [Project Structure](#project-structure)
 
-```bash
-$ npm install
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                        API Server                        │
+│                                                         │
+│  StockController ──► StockService ──► FinnhubApiService │
+│                           │                             │
+│                       PrismaService                     │
+└───────────────────────────┬─────────────────────────────┘
+                            │  Redis (BullMQ)
+                            │  queue: "stock-price"
+┌───────────────────────────▼─────────────────────────────┐
+│                          Worker                          │
+│                                                         │
+│  StockQueueProducer  ──► schedules repeating job        │
+│  StockQueueProcessor ──► fetches prices from Finnhub    │
+│                           │                             │
+│                       PrismaService ──► PostgreSQL       │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Compile and run the project
+### How the server and worker are separated
 
-```bash
-# development
-$ npm run start
+The API server and the worker are **two separate NestJS application contexts** built from the same Docker image but started with different entry points:
 
-# watch mode
-$ npm run start:dev
+| Process    | Entry point          | NestJS module  | Purpose                                            |
+| ---------- | -------------------- | -------------- | -------------------------------------------------- |
+| API server | `dist/src/main.js`   | `AppModule`    | HTTP REST API only — no queue consumers            |
+| Worker     | `dist/src/worker.js` | `WorkerModule` | No HTTP server — only queue producer and processor |
 
-# production mode
-$ npm run start:prod
+The API server (`AppModule`) does **not** import BullMQ at all. It never touches the queue directly.
+
+The worker (`WorkerModule`) does **not** expose any HTTP port. It only:
+
+1. Sets up a BullMQ **job scheduler** that enqueues an `update-all-symbols` job every minute.
+2. Processes `update-all-symbols` jobs by loading all active symbols from the database and enqueuing individual `update-symbol-price` jobs.
+3. Processes `update-symbol-price` jobs by calling Finnhub and persisting the price.
+
+This means you can scale the worker independently from the API server, and neither process crashes the other.
+
+---
+
+## Services
+
+### Infrastructure services
+
+| Service    | Image                | Port   | Purpose          |
+| ---------- | -------------------- | ------ | ---------------- |
+| `postgres` | `postgres:17-alpine` | `5432` | Primary database |
+| `redis`    | `redis:7-alpine`     | `6379` | BullMQ job queue |
+
+### Application services
+
+| Service    | Entry command               | Port   | Purpose                                             |
+| ---------- | --------------------------- | ------ | --------------------------------------------------- |
+| `migrator` | `npx prisma migrate deploy` | —      | One-shot: runs DB migrations on startup, then exits |
+| `app`      | `node dist/src/main.js`     | `3000` | REST API server                                     |
+| `worker`   | `node dist/src/worker.js`   | —      | Background job processor                            |
+
+---
+
+## Data Model
+
+```prisma
+model StockSymbol {
+  id            String       @id @default(cuid())
+  symbol        String       @unique
+  isActive      Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  lastCheckedAt DateTime?
+  prices        StockPrice[]
+}
+
+model StockPrice {
+  id            String      @id @default(cuid())
+  stockSymbolId String
+  price         Decimal     @db.Decimal(12, 4)
+  fetchedAt     DateTime    @default(now())
+  stockSymbol   StockSymbol @relation(...)
+}
 ```
 
-## Run tests
+A `StockSymbol` with `isActive = true` is picked up by the worker every minute and a price record is stored in `StockPrice`. The moving average is computed over the last **10** recorded prices.
 
-```bash
-# unit tests
-$ npm run test
+---
 
-# e2e tests
-$ npm run test:e2e
+## API Endpoints
 
-# test coverage
-$ npm run test:cov
+The Swagger UI is available at **`http://localhost:3000/api`** when the server is running.
+
+### `GET /stock/:symbol`
+
+Returns the latest recorded price, the timestamp of that record, and the 10-period moving average.
+
+**Example response:**
+
+```json
+{
+  "symbol": "AAPL",
+  "currentPrice": 175.34,
+  "lastUpdatedAt": "2026-04-14T10:00:00.000Z",
+  "movingAverage": 174.12
+}
 ```
 
-## Deployment
+`currentPrice`, `lastUpdatedAt`, and `movingAverage` are `null` when no prices have been recorded yet for the symbol.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Returns **404** if the symbol does not exist in the database or if Finnhub returns a zero price for it.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+---
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+### `PUT /stock/:symbol`
+
+Upserts the symbol in the database and enables or disables periodic price tracking.
+
+**Request body (optional):**
+
+```json
+{
+  "isActive": true
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+`isActive` defaults to `true` if omitted. Set it to `false` to stop tracking a symbol without deleting it.
 
-## Resources
+**Example response:**
 
-Check out a few resources that may come in handy when working with NestJS:
+```json
+{
+  "symbol": "AAPL",
+  "isActive": true,
+  "createdAt": "2026-04-14T09:00:00.000Z",
+  "updatedAt": "2026-04-14T10:00:00.000Z"
+}
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Returns **404** if Finnhub does not recognise the symbol (price is zero).
 
-## Support
+---
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Environment Variables
 
-## Stay in touch
+Create a `.env` file in the project root (same directory as `docker-compose.yml`):
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```env
+# Application
+NODE_ENV=production
+PORT=3000
 
-## License
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=peak_homework
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+# Redis (used by the worker only)
+REDIS_URL=redis://redis:6379
+
+# Finnhub
+FINNHUB_BASE_URL=https://finnhub.io/api/v1
+FINNHUB_API_KEY=your_finnhub_api_key_here
+```
+
+A free Finnhub API key can be obtained at [https://finnhub.io](https://finnhub.io).
+
+---
+
+## Running the Application
+
+### With Docker (recommended)
+
+Requires: Docker and Docker Compose.
+
+```bash
+# Build images and start all services (postgres, redis, migrator, app, worker)
+docker compose up --build
+
+# Run in detached mode
+docker compose up --build -d
+
+# Stop all services
+docker compose down
+
+# Stop and remove volumes (wipes the database)
+docker compose down -v
+```
+
+Docker Compose starts services in the correct order:
+
+1. `postgres` and `redis` start first and wait until healthy.
+2. `migrator` runs `prisma migrate deploy` and exits.
+3. `app` (API server) and `worker` start in parallel once the migrator completes.
+
+The API will be available at **`http://localhost:3000`**.
+
+---
+
+### Local Development
+
+Requires: Node.js 24, a running PostgreSQL instance, and a running Redis instance.
+
+```bash
+# Install dependencies
+npm install
+
+# Generate the Prisma client
+npx prisma generate
+
+# Run database migrations
+npx prisma migrate deploy
+
+# Start the API server in watch mode
+npm run start:dev
+
+# In a separate terminal, start the worker (requires a production build first)
+npm run build
+npm run start:worker
+```
+
+To run the API server and worker together in development you need two terminal sessions because they are separate processes.
+
+---
+
+### Available npm Scripts
+
+| Script                 | Description                                    |
+| ---------------------- | ---------------------------------------------- |
+| `npm run build`        | Compile TypeScript to `dist/`                  |
+| `npm run start`        | Start the API server (requires build)          |
+| `npm run start:dev`    | Start the API server in watch/hot-reload mode  |
+| `npm run start:prod`   | Start the API server from `dist/` (production) |
+| `npm run start:worker` | Start the worker from `dist/`                  |
+| `npm run lint`         | Run ESLint and auto-fix issues                 |
+| `npm run format`       | Run Prettier on `src/` and `test/`             |
+
+---
+
+## Running Tests
+
+All unit tests live alongside the source files as `*.spec.ts` files. The test suite uses Jest with `ts-jest`.
+
+```bash
+# Run all unit tests
+npm run test
+
+# Run tests in watch mode (re-runs on file change)
+npm run test:watch
+
+# Run tests with coverage report
+npm run test:cov
+
+# Run end-to-end tests
+npm run test:e2e
+
+# Run tests with the Node.js debugger attached
+npm run test:debug
+```
+
+### What is tested
+
+| Spec file                             | What it covers                                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `stock/stock.service.spec.ts`         | `getStock` and `upsertStock` — database queries, Finnhub responses, 404 handling |
+| `stock/stock.controller.spec.ts`      | HTTP layer — correct status codes and DTO mapping                                |
+| `stock/stock.queue.producer.spec.ts`  | Job scheduler registration and `addSymbolUpdateJob`                              |
+| `stock/stock.queue.processor.spec.ts` | `update-all-symbols` and `update-symbol-price` job handling, zero-price guard    |
+| `stock/finnhub-api.service.spec.ts`   | Finnhub HTTP client — successful response, network errors, non-OK status         |
+| `app.controller.spec.ts`              | Root health-check controller                                                     |
+
+Prisma is mocked via `src/__mocks__/prismaClient.ts` so no real database connection is needed for unit tests.
+
+---
+
+## Project Structure
+
+```
+src/
+├── main.ts                  # API server entry point
+├── worker.ts                # Worker entry point
+├── app.module.ts            # Root module for the API server
+├── worker.module.ts         # Root module for the worker
+├── prisma/
+│   ├── prisma.module.ts     # PrismaModule (global)
+│   └── prisma.service.ts    # PrismaService wrapper
+├── stock/
+│   ├── stock.module.ts      # StockModule (imported by AppModule)
+│   ├── stock.controller.ts  # GET /stock/:symbol, PUT /stock/:symbol
+│   ├── stock.service.ts     # Business logic, moving average calculation
+│   ├── finnhub-api.service.ts # HTTP client for Finnhub
+│   ├── stock.queue.ts       # Queue name and job name constants
+│   ├── stock.queue.producer.ts  # Schedules repeating jobs (used by WorkerModule)
+│   ├── stock.queue.processor.ts # Processes jobs (used by WorkerModule)
+│   └── dto/                 # Request/response DTOs with Swagger decorators
+└── generated/
+    └── prisma/              # Auto-generated Prisma client (do not edit)
+
+prisma/
+├── schema.prisma            # Database schema
+└── migrations/              # Applied migration SQL files
+```
